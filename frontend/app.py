@@ -1,19 +1,23 @@
 """
 Chainlit app for the Kitzur Shulchan Aruch RAG system.
 
-Run: chainlit run frontend/app.py -w
+This is the *frontend* service. It calls the backend FastAPI service
+(at $BACKEND_URL) over HTTP — it does not import the RAG engine directly.
+
+Run locally:
+    BACKEND_URL=http://localhost:8000 chainlit run frontend/app.py -w
 """
-import sys
-from pathlib import Path
+import os
 
 import chainlit as cl
+import httpx
+from dotenv import load_dotenv
 
-# Make backend importable when running via `chainlit run frontend/app.py`.
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
 
-from backend.rag_engine import RAGEngine  # noqa: E402
+load_dotenv()
+
+BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000").rstrip("/")
+HTTP_TIMEOUT = float(os.getenv("BACKEND_TIMEOUT", "60"))
 
 ADMIN_TRIGGER = "מנהל"
 CLARIFICATION_LETTERS = ["א", "ב", "ג", "ד"]
@@ -31,6 +35,33 @@ def parse_clarification_choice(text: str, options: list[str]) -> str | None:
     return text
 
 
+async def call_backend_answer(
+    question: str,
+    history: list[dict],
+    clarification_already_used: bool,
+) -> dict:
+    payload = {
+        "question": question,
+        "history": history,
+        "clarification_already_used": clarification_already_used,
+    }
+    async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as client:
+        response = await client.post(f"{BACKEND_URL}/answer", json=payload)
+        response.raise_for_status()
+        return response.json()
+
+
+async def backend_health_ok() -> tuple[bool, str]:
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            response = await client.get(f"{BACKEND_URL}/health")
+            response.raise_for_status()
+            data = response.json()
+            return True, f"backend ok ({data.get('metadata_count')} chunks)"
+    except Exception as e:
+        return False, str(e)
+
+
 async def handle_admin(command: str) -> None:
     if not command:
         msg = (
@@ -39,6 +70,9 @@ async def handle_admin(command: str) -> None:
             "`threshold=X`, `search`, `show`, `stats`, `history`, `export`, `health`.\n\n"
             "כרגע אף פקודה לא מומשה."
         )
+    elif command.strip() == "health":
+        ok, info = await backend_health_ok()
+        msg = f"🛠️ Backend health: {'✅' if ok else '❌'} {info}\nBACKEND_URL = `{BACKEND_URL}`"
     else:
         msg = (
             f"🛠️ מצב מנהל זיהה את הפקודה: `{command}`\n\n"
@@ -49,18 +83,17 @@ async def handle_admin(command: str) -> None:
 
 @cl.on_chat_start
 async def on_chat_start():
-    try:
-        engine = RAGEngine()
-    except Exception as e:
+    ok, info = await backend_health_ok()
+    if not ok:
         await cl.Message(
             content=(
-                f"❌ שגיאה בטעינת המערכת:\n```\n{e}\n```\n\n"
-                "ודא שהרצת `python -m backend.ingest` ושיש קובץ `.env` עם `OPENAI_API_KEY`."
+                f"❌ לא ניתן להתחבר ל-backend בכתובת `{BACKEND_URL}`.\n\n"
+                f"```\n{info}\n```\n\n"
+                "ודא ש-service ה-backend רץ ושמשתנה הסביבה `BACKEND_URL` מוגדר נכון."
             )
         ).send()
         return
 
-    cl.user_session.set("engine", engine)
     cl.user_session.set("history", [])
     cl.user_session.set("awaiting_clarification", False)
     cl.user_session.set("pending_clarification_options", None)
@@ -80,12 +113,7 @@ async def on_chat_start():
 @cl.on_message
 async def on_message(message: cl.Message):
     text = message.content.strip()
-    engine: RAGEngine | None = cl.user_session.get("engine")
-    if engine is None:
-        await cl.Message(content="❌ המערכת לא נטענה. רענן את הדף.").send()
-        return
 
-    # Step 0 - Admin gateway
     if text.startswith(ADMIN_TRIGGER):
         command = text[len(ADMIN_TRIGGER):].strip()
         await handle_admin(command)
@@ -93,7 +121,6 @@ async def on_message(message: cl.Message):
 
     history: list[dict] = cl.user_session.get("history") or []
 
-    # Was the previous turn a clarification request?
     if cl.user_session.get("awaiting_clarification"):
         options = cl.user_session.get("pending_clarification_options") or []
         original_question = cl.user_session.get("pending_original_question") or ""
@@ -108,17 +135,14 @@ async def on_message(message: cl.Message):
             f"{original_question} (הבהרה: {choice})" if choice else original_question
         )
         await _answer_and_send(
-            engine,
             question=merged,
             history=history,
             history_user_text=original_question,
         )
         return
 
-    # Fresh question
     cl.user_session.set("clarification_used_for_current_question", False)
     await _answer_and_send(
-        engine,
         question=text,
         history=history,
         history_user_text=text,
@@ -126,7 +150,6 @@ async def on_message(message: cl.Message):
 
 
 async def _answer_and_send(
-    engine: RAGEngine,
     question: str,
     history: list[dict],
     history_user_text: str,
@@ -136,13 +159,23 @@ async def _answer_and_send(
     )
 
     try:
-        result = await cl.make_async(engine.answer)(
-            question,
+        result = await call_backend_answer(
+            question=question,
             history=history,
             clarification_already_used=clarification_already_used,
         )
+    except httpx.HTTPStatusError as e:
+        detail = ""
+        try:
+            detail = e.response.json().get("detail", "")
+        except Exception:
+            detail = e.response.text
+        await cl.Message(
+            content=f"❌ שגיאה מ-backend ({e.response.status_code}): {detail}"
+        ).send()
+        return
     except Exception as e:
-        await cl.Message(content=f"❌ שגיאה בעיבוד השאלה: {e}").send()
+        await cl.Message(content=f"❌ שגיאת תקשורת מול ה-backend: {e}").send()
         return
 
     rtype = result["type"]
@@ -174,7 +207,6 @@ async def _answer_and_send(
         await cl.Message(content=msg).send()
         return
 
-    # rtype == "answer"
     text_out = result["text"]
     await cl.Message(content=text_out).send()
     history.append({"role": "user", "content": history_user_text})
