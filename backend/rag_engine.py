@@ -234,34 +234,20 @@ class RAGEngine:
         )
         raw = response.choices[0].message.content.strip()
 
-        # DEBUG: prepend the prompt + raw JSON to every answer for testing.
-        # Remove this block when no longer needed.
-        debug_block = (
-            "<details>\n"
-            "<summary><b>📤 הפרומפט שנשלח ל-LLM (לחץ לפתיחה)</b></summary>\n\n"
-            "**System prompt:**\n"
-            f"```\n{SYSTEM_PROMPT}\n```\n\n"
-            "**User content:**\n"
-            f"```\n{user_content}\n```\n\n"
-            "</details>\n\n"
-            "**📥 JSON שהתקבל מה-LLM:**\n"
-            f"```json\n{raw}\n```\n\n---\n\n"
-        )
-
         try:
             result = json.loads(raw)
         except json.JSONDecodeError:
             print(f"[generate_answer] JSON parse failed, falling back. Raw: {raw[:200]}")
-            return debug_block + self._format_fallback(raw, retrieved)
+            return self._format_fallback(raw, retrieved)
 
         answer = (result.get("answer") or "").strip()
         used_raw = result.get("used_sources") or []
 
         if not answer:
-            return debug_block + self._format_fallback(raw, retrieved)
+            return self._format_fallback(raw, retrieved)
 
         if "לא נמצא מידע מספיק" in answer:
-            return debug_block + answer  # No citation block on fallback message
+            return answer
 
         # Validate used_sources: must be ints in valid range, deduplicated, in order.
         valid_used: list[int] = []
@@ -282,7 +268,7 @@ class RAGEngine:
             )
             valid_used = [1]
 
-        return debug_block + self._format_with_citations(answer, valid_used, retrieved)
+        return self._format_with_citations(answer, valid_used, retrieved)
 
     def _format_with_citations(
         self, answer: str, used_sources: list[int], retrieved: list[dict]
