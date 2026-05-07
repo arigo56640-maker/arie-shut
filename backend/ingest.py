@@ -86,6 +86,10 @@ def main() -> None:
             "with: OPENAI_API_KEY=sk-..."
         )
 
+    if EMBEDDINGS_PATH.exists() and METADATA_PATH.exists():
+        print("Vector store already exists — skipping ingest.")
+        return
+
     print(f"Loading corpus from {DATA_PATH}...")
     with open(DATA_PATH, "r", encoding="utf-8") as f:
         corpus = json.load(f)
