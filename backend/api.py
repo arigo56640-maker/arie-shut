@@ -116,17 +116,27 @@ def health() -> dict[str, Any]:
     }
 
 
+@app.get("/echo")
+def echo(q: str = "test") -> dict[str, Any]:
+    """Debug: verify that the server receives Hebrew text correctly."""
+    return {"received": q, "repr": repr(q), "len": len(q)}
+
+
 @app.post("/answer")
 def answer(req: AnswerRequest) -> dict[str, Any]:
     if _status in ("starting", "loading"):
         raise HTTPException(status_code=503, detail=f"Backend {_status} — try again in a moment.")
     if _status == "error" or _engine is None:
         raise HTTPException(status_code=503, detail=f"Engine error: {_engine_error}")
+    print(f"[api] /answer question={req.question!r}")
     try:
-        return _engine.answer(
+        result = _engine.answer(
             question=req.question,
             history=req.history,
             clarification_already_used=req.clarification_already_used,
         )
+        top_score = result.get("retrieved", [{}])[0].get("score", 0) if result.get("retrieved") else 0
+        print(f"[api] /answer type={result.get('type')} top_score={top_score:.4f} rewritten={result.get('rewritten')!r}")
+        return result
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
