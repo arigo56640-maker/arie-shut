@@ -1,0 +1,17 @@
+.env
+__pycache__/
+*.pyc
+*.pyo
+.chainlit/
+.claude/
+.files/
+backend/vector_store/
+.venv/
+venv/
+
+# Generated test outputs
+*_output.txt
+
+# OS metadata
+Thumbs.db
+.DS_Store
