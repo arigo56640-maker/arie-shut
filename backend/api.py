@@ -83,12 +83,19 @@ def debug_embed(q: str = "שבת") -> dict[str, Any]:
         norms = npy.linalg.norm(emb, axis=1)
         scores = emb @ qv_n
         idx = int(npy.argmax(scores))
+        # Also use engine's own embed_query for comparison
+        engine_qv = _engine.embed_query(q)
+        engine_scores = emb @ engine_qv
+        engine_idx = int(npy.argmax(engine_scores))
         result.update({
             "store_shape": list(emb.shape),
             "store_dtype": str(emb.dtype),
             "store_norm_mean": float(norms.mean()),
             "store_first3": emb[0][:3].tolist(),
-            "top_score": float(scores[idx]),
+            "top_score_direct": float(scores[idx]),
+            "top_score_engine_qv": float(engine_scores[engine_idx]),
+            "engine_qv_first3": engine_qv[:3].tolist(),
+            "engine_qv_norm": float(npy.linalg.norm(engine_qv)),
             "top_ref": _engine.metadata[idx].get("full_reference", "?"),
         })
     return result
