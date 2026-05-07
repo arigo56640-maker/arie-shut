@@ -68,6 +68,32 @@ def startup_event() -> None:
     threading.Thread(target=_bootstrap, daemon=True).start()
 
 
+@app.get("/debug-embed")
+def debug_embed(q: str = "שבת") -> dict[str, Any]:
+    import numpy as npy
+    from openai import OpenAI
+    client = OpenAI()
+    resp = client.embeddings.create(model="text-embedding-3-large", input=[q])
+    qv = npy.array(resp.data[0].embedding, dtype=npy.float32)
+    qv_norm = float(npy.linalg.norm(qv))
+    qv_n = qv / qv_norm if qv_norm > 0 else qv
+    result: dict[str, Any] = {"query": q, "query_norm": qv_norm, "query_first3": qv[:3].tolist()}
+    if _engine is not None:
+        emb = _engine.embeddings
+        norms = npy.linalg.norm(emb, axis=1)
+        scores = emb @ qv_n
+        idx = int(npy.argmax(scores))
+        result.update({
+            "store_shape": list(emb.shape),
+            "store_dtype": str(emb.dtype),
+            "store_norm_mean": float(norms.mean()),
+            "store_first3": emb[0][:3].tolist(),
+            "top_score": float(scores[idx]),
+            "top_ref": _engine.metadata[idx].get("full_reference", "?"),
+        })
+    return result
+
+
 @app.get("/health")
 def health() -> dict[str, Any]:
     if _status in ("starting", "loading"):
