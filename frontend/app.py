@@ -57,7 +57,11 @@ async def backend_health_ok() -> tuple[bool, str]:
             response = await client.get(f"{BACKEND_URL}/health")
             response.raise_for_status()
             data = response.json()
-            return True, f"backend ok ({data.get('metadata_count')} chunks)"
+            status = data.get("status")
+            if status == "ok":
+                return True, f"backend ok ({data.get('metadata_count')} chunks)"
+            # "loading" or "starting" — backend is warming up
+            return False, f"backend {status} (vector store initializing, ~3 min on first deploy)"
     except Exception as e:
         return False, str(e)
 
@@ -85,8 +89,13 @@ async def handle_admin(command: str) -> None:
 async def on_chat_start():
     ok, info = await backend_health_ok()
     if not ok:
+        loading_msg = "loading" in info or "starting" in info
         await cl.Message(
             content=(
+                f"⏳ **Backend מתחיל...** ({info})\n\n"
+                "המערכת טוענת את מאגר ההטמעות לראשונה. תהליך זה אורך כ-3 דקות. "
+                "רענן את הדף בעוד מספר דקות."
+                if loading_msg else
                 f"❌ לא ניתן להתחבר ל-backend בכתובת `{BACKEND_URL}`.\n\n"
                 f"```\n{info}\n```\n\n"
                 "ודא ש-service ה-backend רץ ושמשתנה הסביבה `BACKEND_URL` מוגדר נכון."
