@@ -24,6 +24,16 @@ TOP_K = 5
 # score ~0.50-0.66 even on direct matches.
 THRESHOLD_MIN = 0.42      # below this → "no info" fallback
 
+# Toggle the Router-based clarification flow ("did you mean X or Y?").
+# Disabled per user request — answer directly whenever score >= THRESHOLD_MIN.
+# Flip to True to re-enable the Router.
+CLARIFICATION_ENABLED = False
+
+# Toggle follow-up handling. When False, rewrite_query ignores chat history and
+# returns the current question as-is — every question is treated as standalone.
+# Flip to True to re-enable history-aware query rewriting.
+FOLLOWUP_ENABLED = False
+
 
 SYSTEM_PROMPT = """אתה עוזר הלכתי המתמחה אך ורק בספר "קיצור שולחן ערוך".
 
@@ -140,6 +150,8 @@ class RAGEngine:
         return results
 
     def rewrite_query(self, history: list[dict], current_question: str) -> str:
+        if not FOLLOWUP_ENABLED:
+            return current_question
         if not history:
             return current_question
         recent = history[-6:]
@@ -177,6 +189,10 @@ class RAGEngine:
             return {"path": "no_info"}
 
         kept_chunks = [c for c in retrieved if c["score"] >= THRESHOLD_MIN]
+
+        # Clarification disabled — answer directly without invoking the Router.
+        if not CLARIFICATION_ENABLED:
+            return {"path": "answer", "chunks": kept_chunks}
 
         # If a clarification was already given for this question, answer directly.
         if clarification_already_used:
@@ -234,20 +250,37 @@ class RAGEngine:
         )
         raw = response.choices[0].message.content.strip()
 
+        # === USER_DEBUG_BLOCK: prepended to every answer by explicit user request. ===
+        # Shows the prompt sent to the LLM and the raw JSON returned, for our manual
+        # testing/inspection. DO NOT REMOVE unless the user explicitly asks
+        # ("הסר את בלוק הבדיקות" / "remove the debug block"). It is NOT a leftover.
+        debug_block = (
+            "<details>\n"
+            "<summary><b>📤 הפרומפט שנשלח ל-LLM (לחץ לפתיחה)</b></summary>\n\n"
+            "**System prompt:**\n"
+            f"```\n{SYSTEM_PROMPT}\n```\n\n"
+            "**User content:**\n"
+            f"```\n{user_content}\n```\n\n"
+            "</details>\n\n"
+            "**📥 JSON שהתקבל מה-LLM:**\n"
+            f"```json\n{raw}\n```\n\n---\n\n"
+        )
+        # === END USER_DEBUG_BLOCK ===
+
         try:
             result = json.loads(raw)
         except json.JSONDecodeError:
             print(f"[generate_answer] JSON parse failed, falling back. Raw: {raw[:200]}")
-            return self._format_fallback(raw, retrieved)
+            return debug_block + self._format_fallback(raw, retrieved)
 
         answer = (result.get("answer") or "").strip()
         used_raw = result.get("used_sources") or []
 
         if not answer:
-            return self._format_fallback(raw, retrieved)
+            return debug_block + self._format_fallback(raw, retrieved)
 
         if "לא נמצא מידע מספיק" in answer:
-            return answer
+            return debug_block + answer
 
         # Validate used_sources: must be ints in valid range, deduplicated, in order.
         valid_used: list[int] = []
@@ -268,7 +301,7 @@ class RAGEngine:
             )
             valid_used = [1]
 
-        return self._format_with_citations(answer, valid_used, retrieved)
+        return debug_block + self._format_with_citations(answer, valid_used, retrieved)
 
     def _format_with_citations(
         self, answer: str, used_sources: list[int], retrieved: list[dict]
