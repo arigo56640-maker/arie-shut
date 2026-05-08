@@ -1,0 +1,22 @@
+/* RTL layout for the Chainlit app — main page mirrored for Hebrew. */
+
+html, body, #root {
+    direction: rtl;
+}
+
+/* Message bubbles, headers, lists, paragraphs — flow to the right by default. */
+p, h1, h2, h3, h4, h5, h6, ul, ol, li, blockquote {
+    text-align: right;
+}
+
+/* Input area: caret on the right, text starts from the right. */
+textarea, input[type="text"] {
+    direction: rtl;
+    text-align: right;
+}
+
+/* Keep code blocks LTR — code is always left-to-right. */
+pre, code, pre *, code * {
+    direction: ltr;
+    text-align: left;
+}
