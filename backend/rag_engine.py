@@ -249,7 +249,7 @@ class RAGEngine:
                 return {"path": "clarification", "options": options[:3]}
         return {"path": "answer", "chunks": kept_chunks}
 
-    def generate_answer(self, query: str, retrieved: list[dict]) -> str:
+    def generate_answer(self, query: str, retrieved: list[dict]) -> dict:
         # Build numbered sources block. Numbers ARE meaningful - LLM returns them in used_sources.
         # Note: similarity score is intentionally NOT sent to the LLM - it should pick by content,
         # not by retrieval rank. The score is shown to the user only in the final citation block.
@@ -270,39 +270,36 @@ class RAGEngine:
             temperature=0.2,
             response_format={"type": "json_object"},
         )
-        raw = response.choices[0].message.content.strip()
+        # message.content can legitimately be None (e.g. refusal in JSON mode).
+        raw = (response.choices[0].message.content or "").strip()
 
-        # === USER_DEBUG_BLOCK: prepended to every answer by explicit user request. ===
-        # Shows the prompt sent to the LLM and the raw JSON returned, for our manual
-        # testing/inspection. DO NOT REMOVE unless the user explicitly asks
-        # ("הסר את בלוק הבדיקות" / "remove the debug block"). It is NOT a leftover.
-        debug_block = (
-            "<details>\n"
-            "<summary><b>📤 הפרומפט שנשלח ל-LLM (לחץ לפתיחה)</b></summary>\n\n"
+        # USER_DEBUG_BLOCK: per user requirement, the prompt sent and the raw JSON
+        # returned must be exposed for inspection. Previously prepended to every
+        # answer; now returned as separate fields so the frontend can show them
+        # only when the user asks for them via admin mode. Keep this contract:
+        # `last_prompt` and `last_raw_json` MUST be present on every answer dict.
+        last_prompt = (
             "**System prompt:**\n"
             f"```\n{SYSTEM_PROMPT}\n```\n\n"
             "**User content:**\n"
-            f"```\n{user_content}\n```\n\n"
-            "</details>\n\n"
-            "**📥 JSON שהתקבל מה-LLM:**\n"
-            f"```json\n{raw}\n```\n\n---\n\n"
+            f"```\n{user_content}\n```"
         )
-        # === END USER_DEBUG_BLOCK ===
+        debug = {"last_prompt": last_prompt, "last_raw_json": raw}
 
         try:
-            result = json.loads(raw)
+            parsed = json.loads(raw)
         except json.JSONDecodeError:
             print(f"[generate_answer] JSON parse failed, falling back. Raw: {raw[:200]}")
-            return debug_block + self._format_fallback(raw, retrieved)
+            return {"text": self._format_fallback(raw, retrieved), **debug}
 
-        answer = (result.get("answer") or "").strip()
-        used_raw = result.get("used_sources") or []
+        answer = (parsed.get("answer") or "").strip()
+        used_raw = parsed.get("used_sources") or []
 
         if not answer:
-            return debug_block + self._format_fallback(raw, retrieved)
+            return {"text": self._format_fallback(raw, retrieved), **debug}
 
         if "לא נמצא מידע מספיק" in answer:
-            return debug_block + answer
+            return {"text": answer, **debug}
 
         # Validate used_sources: must be ints in valid range, deduplicated, in order.
         valid_used: list[int] = []
@@ -323,7 +320,10 @@ class RAGEngine:
             )
             valid_used = [1]
 
-        return debug_block + self._format_with_citations(answer, valid_used, retrieved)
+        return {
+            "text": self._format_with_citations(answer, valid_used, retrieved),
+            **debug,
+        }
 
     def _format_with_citations(
         self, answer: str, used_sources: list[int], retrieved: list[dict]
@@ -383,5 +383,12 @@ class RAGEngine:
             return {**base, "type": "clarification", "options": decision["options"]}
 
         chunks = decision["chunks"]
-        text = self.generate_answer(rewritten, chunks)
-        return {**base, "type": "answer", "text": text, "chunks": chunks}
+        gen = self.generate_answer(rewritten, chunks)
+        return {
+            **base,
+            "type": "answer",
+            "text": gen["text"],
+            "chunks": chunks,
+            "last_prompt": gen["last_prompt"],
+            "last_raw_json": gen["last_raw_json"],
+        }

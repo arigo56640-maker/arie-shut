@@ -66,23 +66,58 @@ async def backend_health_ok() -> tuple[bool, str]:
         return False, str(e)
 
 
+ADMIN_MENU = (
+    "🛠️ **מצב מנהל — אפשרויות:**\n\n"
+    "1. הצג נתונים על השאלה האחרונה (prompt + JSON גולמי)\n"
+    "2. בדיקת תקינות backend (health)\n"
+    "3. הצגת סטטיסטיקות שיחה — *בקרוב*\n"
+    "4. ייצוא היסטוריית שיחה — *בקרוב*\n\n"
+    "להפעלה: הקלד `מנהל 1` עד `מנהל 4`."
+)
+
+
+def _format_last_debug(debug: dict) -> str:
+    return (
+        f"🛠️ **נתוני השאלה האחרונה**\n\n"
+        f"**שאלה (לאחר שכתוב):** {debug.get('question', '—')}\n\n"
+        "<details>\n"
+        "<summary><b>📤 הפרומפט שנשלח ל-LLM (לחץ לפתיחה)</b></summary>\n\n"
+        f"{debug.get('last_prompt', '')}\n\n"
+        "</details>\n\n"
+        "**📥 JSON שהתקבל מה-LLM:**\n"
+        f"```json\n{debug.get('last_raw_json', '')}\n```"
+    )
+
+
 async def handle_admin(command: str) -> None:
-    if not command:
-        msg = (
-            "🛠️ **מצב מנהל**\n\n"
-            "פקודות מתוכננות לעתיד: `verbose`, `timing`, `cost`, `top_k=N`, "
-            "`threshold=X`, `search`, `show`, `stats`, `history`, `export`, `health`.\n\n"
-            "כרגע אף פקודה לא מומשה."
-        )
-    elif command.strip() == "health":
+    cmd = command.strip()
+
+    if not cmd:
+        await cl.Message(content=ADMIN_MENU).send()
+        return
+
+    if cmd in ("1", "debug"):
+        debug = cl.user_session.get("last_debug")
+        if not debug:
+            msg = "🛠️ לא נשאלה עדיין שאלה בשיחה הזו — אין נתונים להציג."
+        else:
+            msg = _format_last_debug(debug)
+        await cl.Message(content=msg).send()
+        return
+
+    if cmd in ("2", "health"):
         ok, info = await backend_health_ok()
         msg = f"🛠️ Backend health: {'✅' if ok else '❌'} {info}\nBACKEND_URL = `{BACKEND_URL}`"
-    else:
-        msg = (
-            f"🛠️ מצב מנהל זיהה את הפקודה: `{command}`\n\n"
-            "בשלב הראשון אין מימוש פעיל. ראה `IMPLEMENTATION_PLAN.md` לרעיונות עתידיים."
-        )
-    await cl.Message(content=msg).send()
+        await cl.Message(content=msg).send()
+        return
+
+    if cmd in ("3", "4"):
+        await cl.Message(content="🛠️ אפשרות זו עדיין לא מומשה (בקרוב).").send()
+        return
+
+    await cl.Message(
+        content=f"🛠️ פקודה לא מוכרת: `{cmd}`\n\n{ADMIN_MENU}"
+    ).send()
 
 
 @cl.on_chat_start
@@ -108,6 +143,7 @@ async def on_chat_start():
     cl.user_session.set("pending_clarification_options", None)
     cl.user_session.set("pending_original_question", None)
     cl.user_session.set("clarification_used_for_current_question", False)
+    cl.user_session.set("awaiting_admin_choice", False)
 
     await cl.Message(
         content=(
@@ -125,7 +161,14 @@ async def on_message(message: cl.Message):
 
     if text.startswith(ADMIN_TRIGGER):
         command = text[len(ADMIN_TRIGGER):].strip()
+        # Bare "מנהל" opens the menu and waits for the next message as the choice.
+        cl.user_session.set("awaiting_admin_choice", not command)
         await handle_admin(command)
+        return
+
+    if cl.user_session.get("awaiting_admin_choice"):
+        cl.user_session.set("awaiting_admin_choice", False)
+        await handle_admin(text)
         return
 
     history: list[dict] = cl.user_session.get("history") or []
@@ -217,6 +260,15 @@ async def _answer_and_send(
         return
 
     text_out = result["text"]
+    if "last_prompt" in result and "last_raw_json" in result:
+        cl.user_session.set(
+            "last_debug",
+            {
+                "question": result.get("rewritten") or question,
+                "last_prompt": result["last_prompt"],
+                "last_raw_json": result["last_raw_json"],
+            },
+        )
     await cl.Message(content=text_out).send()
     history.append({"role": "user", "content": history_user_text})
     history.append({"role": "assistant", "content": text_out})
