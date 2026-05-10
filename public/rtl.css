@@ -4,6 +4,16 @@ html, body, #root {
     direction: rtl;
 }
 
+/* Mobile viewport: use dynamic viewport height so the input area
+   isn't pushed below the URL bar on phones. Falls back to vh on
+   browsers that don't support dvh. */
+html, body, #root {
+    height: 100vh;
+    height: 100dvh;
+    min-height: 100vh;
+    min-height: 100dvh;
+}
+
 /* Message bubbles, headers, lists, paragraphs — flow to the right by default. */
 p, h1, h2, h3, h4, h5, h6, ul, ol, li, blockquote {
     text-align: right;
