@@ -16,3 +16,11 @@ venv/
 # OS metadata
 Thumbs.db
 .DS_Store
+
+# Local dev server logs (uvicorn / chainlit / cloudflared started in-process)
+.uvicorn.log
+.uvicorn.err.log
+.chainlit.log
+.chainlit.err.log
+.cloudflared.log
+.cloudflared.err.log

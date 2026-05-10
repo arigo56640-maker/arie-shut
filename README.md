@@ -75,3 +75,36 @@ chainlit run frontend/app.py -w
 ## מצב מנהל
 
 מילת המפתח `מנהל` בתחילת הודעה מפעילה placeholder להרחבות עתידיות. ראה `IMPLEMENTATION_PLAN.md` לרעיונות לעתיד.
+
+## ממשק WhatsApp (Green API)
+
+המערכת חושפת את אותו `RAGEngine` גם דרך WhatsApp באמצעות [Green API](https://green-api.com).
+ה-Chainlit ממשיך לעבוד כרגיל בדפדפן — שני הממשקים קוראים לאותו מנוע, כך ששינוי לוגיקה משפיע על שניהם.
+
+### הפעלה מקומית
+
+1. הרשם ב-Green API ויצור instance. שמור את `idInstance` ואת `apiTokenInstance`.
+2. הוסף ל-`.env`:
+   ```
+   GREENAPI_INSTANCE_ID=<idInstance>
+   GREENAPI_API_TOKEN=<apiTokenInstance>
+   GREENAPI_WEBHOOK_TOKEN=<בחר מחרוזת סודית כלשהי>
+   ```
+3. הפעל את ה-FastAPI backend:
+   ```bash
+   uvicorn backend.api:app --host 0.0.0.0 --port 8000
+   ```
+4. חשוף אותו לאינטרנט עם ngrok:
+   ```bash
+   ngrok http 8000
+   ```
+5. בלוח הבקרה של Green API, הגדר:
+   - `webhookUrl`: `https://<ngrok-id>.ngrok-free.app/webhook/whatsapp?token=<GREENAPI_WEBHOOK_TOKEN>`
+   - הפעל את ההתראה `incomingMessageReceived`.
+6. סרוק את ה-QR בטלפון (כמו WhatsApp Web). שלח הודעה למספר המחובר ובדוק שמתקבלת תשובה.
+
+### זרימה זהה ל-Chainlit
+
+- "מנהל" → תפריט מנהל. "מנהל 1" → הצגת הפרומפט וה-JSON של השאלה האחרונה (לכל משתמש בנפרד).
+- שאלות מעורפלות מקבלות הבהרה (א/ב/ג); ניתן להשיב באות או בטקסט חופשי.
+- היסטוריית שיחה נשמרת לכל מספר טלפון ומאופסת ב-restart של השרת.

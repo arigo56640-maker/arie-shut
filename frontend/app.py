@@ -13,26 +13,18 @@ import chainlit as cl
 import httpx
 from dotenv import load_dotenv
 
+from backend.shared import (
+    ADMIN_TRIGGER,
+    NO_INFO_MESSAGE,
+    format_clarification_message,
+    parse_clarification_choice,
+)
+
 
 load_dotenv()
 
 BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000").rstrip("/")
 HTTP_TIMEOUT = float(os.getenv("BACKEND_TIMEOUT", "60"))
-
-ADMIN_TRIGGER = "מנהל"
-CLARIFICATION_LETTERS = ["א", "ב", "ג", "ד"]
-
-
-def parse_clarification_choice(text: str, options: list[str]) -> str | None:
-    text = text.strip()
-    if not text:
-        return None
-    first_char = text[0]
-    if first_char in CLARIFICATION_LETTERS:
-        idx = CLARIFICATION_LETTERS.index(first_char)
-        if idx < len(options):
-            return options[idx]
-    return text
 
 
 async def call_backend_answer(
@@ -236,7 +228,7 @@ async def _answer_and_send(
         print(f"[rewritten query] {rewritten}")
 
     if rtype == "no_info":
-        msg = "לא נמצא מידע מספיק במסמכים כדי לענות על השאלה."
+        msg = NO_INFO_MESSAGE
         await cl.Message(content=msg).send()
         history.append({"role": "user", "content": history_user_text})
         history.append({"role": "assistant", "content": msg})
@@ -245,14 +237,7 @@ async def _answer_and_send(
 
     if rtype == "clarification":
         options = result["options"]
-        opts_text = "\n".join(
-            f"{CLARIFICATION_LETTERS[i]}. {opt}" for i, opt in enumerate(options)
-        )
-        msg = (
-            "כדי לענות בצורה מדויקת, אנא הבהר:\n\n"
-            f"{opts_text}\n\n"
-            "ניתן להשיב באות (א/ב/ג) או בטקסט חופשי."
-        )
+        msg = format_clarification_message(options)
         cl.user_session.set("awaiting_clarification", True)
         cl.user_session.set("pending_clarification_options", options)
         cl.user_session.set("pending_original_question", history_user_text)
