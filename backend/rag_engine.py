@@ -34,6 +34,12 @@ CLARIFICATION_ENABLED = False
 # Flip to True to re-enable history-aware query rewriting.
 FOLLOWUP_ENABLED = False
 
+# Toggle the per-source match percentage shown next to each citation.
+# When False, citations are rendered without "(התאמה: X%)". The score is still
+# computed and used internally; only the user-visible suffix is suppressed.
+# Flip to True to re-enable the percentage in the citation block.
+SHOW_MATCH_PERCENT = False
+
 
 SYSTEM_PROMPT = """אתה עוזר הלכתי המתמחה אך ורק בספר "קיצור שולחן ערוך".
 
@@ -337,10 +343,11 @@ class RAGEngine:
         for i, src_num in enumerate(used_sources, start=1):
             c = retrieved[src_num - 1]
             percent = round(c["score"] * 100)
+            suffix = f" (התאמה: {percent}%)" if SHOW_MATCH_PERCENT else ""
             if len(used_sources) == 1:
-                heading = f"**{c['full_reference']}** (התאמה: {percent}%)"
+                heading = f"**{c['full_reference']}**{suffix}"
             else:
-                heading = f"**{i}. {c['full_reference']}** (התאמה: {percent}%)"
+                heading = f"**{i}. {c['full_reference']}**{suffix}"
             lines.append(heading)
             lines.append("")
             quoted = "\n".join(
@@ -356,10 +363,11 @@ class RAGEngine:
         if retrieved:
             c = retrieved[0]
             percent = round(c["score"] * 100)
+            suffix = f" (התאמה: {percent}%)" if SHOW_MATCH_PERCENT else ""
             lines.extend([
                 "", "---", "",
                 "📖 **מקור (fallback):**", "",
-                f"**{c['full_reference']}** (התאמה: {percent}%)", "",
+                f"**{c['full_reference']}**{suffix}", "",
                 f"> {c['content']}",
             ])
         return "\n".join(lines).rstrip()
